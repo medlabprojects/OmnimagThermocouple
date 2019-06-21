@@ -1,8 +1,20 @@
-#include <Adafruit_MAX31856.h>
-#include "Wire.h"  //for I2C comm
-#include "SPI.h"  //for SPI comm
+/*  Omnimagnet Thermocouple Teensy Code
+************************************************
+************************************************
+*** Dominick Ropella                         ***
+*** Vanderbilt University 2019               ***
+*** V1.1 Stable Release                      ***
+*** 6/21/19                                  ***
+*** Contact: dominick.ropella@vanderbilt.edu ***
+************************************************  
+************************************************
+*/
+
+#include <Adafruit_MAX31856.h> //Thermocouple header
+#include "Wire.h"  //for I2C comm for OLED screen
+#include "SPI.h"  //for SPI comm for thermocouple boards
 #include <Adafruit_GFX.h>  //Graphics header
-#include <Adafruit_SSD1306.h> //OLED Screen header
+#include <Adafruit_SSD1306.h> //OLED screen header
 
 // Initialize thermocouple objects and setup hardware SPI pins for each
 // Using software SPI: input any 4 digital I/O pins, order: CS, DI, DO, CLK
@@ -11,41 +23,34 @@ Adafruit_MAX31856 innerCoil = Adafruit_MAX31856(10);
 Adafruit_MAX31856 middleCoil = Adafruit_MAX31856(9);
 Adafruit_MAX31856 outerCoil = Adafruit_MAX31856(8);
 
-// Pin for over-temperature system shutdown
-int overtempPin = 0;
+// Pin for over-temperature system shutdown and temperature limit
+const int overtempPin = 0;
+const float maxTempLimit = 30.0; //Celcius
 
 //OLED Screen Setup
-#define OLED_RESET 14
+const int OLED_RESET = 14;
 Adafruit_SSD1306 display(OLED_RESET); //reset (wipe) display
-const int pixPosUnitX = 110;
-const int pixOffsetX = 60; //for equals sign
-const int pixOffsetX2 = 70; //offset for Temperature readings
-const int pixVert = 8; //vertical pixel spacing unit going from top to bottom
-const int barLength = 30; //length of rectangle that clears temp data field on screen
-const int pixLoopTimeX = 100;
-const int pixLoopTimeY = 24;
-int16_t  X1, Y1;
-int16_t  X2, Y2;
-int16_t  X3, Y3;
-int16_t  X4, Y4;
-const bool display_flag = true; //choose to display field data or not.
+const int pixPosUnitX = 110; //horizontal spacing for Celcius label
+const int pixOffsetX = 60; //horizontal spacing for equals sign
+const int pixOffsetX2 = 70; //horizontal spacing for Temperature readings
+const int pixVert = 8; //vertical pixel row spacing unit going from top to bottom
+const int barLength = 30; //pixel length of rectangle that clears temp data field on screen
 
 //Temperature Readings Variables and Sensor Faults. Faults initialized to no errors. 
-float innerTemp, middleTemp, outerTemp;
+float innerTemp = 0.0;
+float middleTemp = 0.0;
+float outerTemp = 0.0;
 uint8_t innerFault = 0;
 uint8_t middleFault = 0;
 uint8_t outerFault = 0;
 
 void setup() {
-  delay(1000);
-  Serial.begin(115200);
-  
-  Serial.println("Omnimag thermocouple test");
-  delay(500);
+  delay(1000); //This delay ensures successful startup when using poor power supplies
+  Serial.begin(115200); //Speed doesn't matter here since teensy runs on native USB
 
   //Start the display
-  display.begin(SSD1306_SWITCHCAPVCC, 0X3C);  // initialize with the I2C addr 0X3D (for the 128x64)
-  display.setRotation(4); //long side is horizontal with pins on right side of board
+  display.begin(SSD1306_SWITCHCAPVCC, 0X3C); //initialize with the I2C addr 0X3D (for the 128x64)
+  display.setRotation(4); //long side is horizontal with pins on bottom side of board
   display.clearDisplay();
   display.display(); //turns on display and clears
   display.setTextSize(2);
@@ -54,7 +59,8 @@ void setup() {
   display.println("Starting");
   display.print("System");
   display.display(); //displays starting sensor text at beginning
-  delay(500);
+  delay(500); //Only for 0.5 seconds
+  
   // setup static text (so we don't waste time refreshing it over and over)
   display.clearDisplay();
   display.display(); //update the display to clear
@@ -84,7 +90,7 @@ void setup() {
   display.println("C");
   display.display();
 
-  //Set fault pin type 
+  //Set fault pin type and set intially to no fault
   pinMode(overtempPin, OUTPUT);
   digitalWriteFast(overtempPin, LOW);
 
@@ -108,9 +114,9 @@ void loop() {
   display.fillRect(pixOffsetX2, 2*pixVert, barLength, pixVert, BLACK);//clear text area for outer temp
 
   //Record new readings from thermocouples
-  innerTemp = innerCoil.readThermocoupleTemperature();
+  innerTemp  = innerCoil.readThermocoupleTemperature();
   middleTemp = middleCoil.readThermocoupleTemperature();
-  outerTemp = outerCoil.readThermocoupleTemperature();
+  outerTemp  = outerCoil.readThermocoupleTemperature();
 
   //Display new temperature readings
   display.setCursor(pixOffsetX2,0);
@@ -122,11 +128,11 @@ void loop() {
   display.display();
   
   // Check any faults
-  innerFault = innerCoil.readFault();
+  innerFault  = innerCoil.readFault();
   middleFault = middleCoil.readFault();
-  outerFault = outerCoil.readFault();
+  outerFault  = outerCoil.readFault();
 
-  //Blink if faults occur
+  //Blink twice quickly if any faults occur
   if (innerFault != 0 || middleFault != 0 || outerFault != 0) {
     digitalWriteFast(overtempPin, HIGH);
     delay(100);
@@ -138,8 +144,8 @@ void loop() {
     delay(100);
   }
 
-  //Set overtemp pin to HIGH if temperature is over threshold 
-  if (innerTemp >= 30.0 || middleTemp >= 30.0 || outerTemp >= 30.0) {
+  //Set overtemp pin to HIGH if temperature is over threshold on any thermocouple
+  if (innerTemp >= maxTempLimit || middleTemp >= maxTempLimit || outerTemp >= maxTempLimit) {
     digitalWriteFast(overtempPin, HIGH);
   }
 
