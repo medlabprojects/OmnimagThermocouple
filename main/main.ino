@@ -1,15 +1,16 @@
 #include <Adafruit_MAX31856.h>
 #include "Wire.h"  //for I2C comm
+#include "SPI.h"  //for SPI comm
 #include <Adafruit_GFX.h>  //Graphics header
 #include <Adafruit_SSD1306.h> //OLED Screen header
 
 // Initialize thermocouple objects and setup software SPI pins for each
 // Use software SPI: CS, DI, DO, CLK
-Adafruit_MAX31856 innerCoil = Adafruit_MAX31856(0, 1, 2, 3);
-Adafruit_MAX31856 middleCoil = Adafruit_MAX31856(4, 5, 6, 7);
-Adafruit_MAX31856 outerCoil = Adafruit_MAX31856(8, 9, 10, 11);
+Adafruit_MAX31856 innerCoil = Adafruit_MAX31856(10);
+Adafruit_MAX31856 middleCoil = Adafruit_MAX31856(9);
+Adafruit_MAX31856 outerCoil = Adafruit_MAX31856(8);
 
-int overtempPin = 13;
+int overtempPin = 0;
 
 //OLED Screen Setup
 #define OLED_RESET 14
@@ -31,6 +32,7 @@ float innerTemp, middleTemp, outerTemp;
 void setup() {
   delay(1000);
   Serial.begin(115200);
+  SPI.begin();
   delay(500);
   
   Serial.println("Omnimag thermocouple test");
@@ -98,7 +100,7 @@ void loop() {
   display.fillRect(70, 0, 30, 8, BLACK); // clear text area for inner coil temp
   display.fillRect(70, 8, 30, 8, BLACK); // clear text area for middle coil temp
   display.fillRect(70,16, 30, 8, BLACK); // clear text area for outer coil temp
-  
+
   innerTemp = innerCoil.readThermocoupleTemperature();
   middleTemp = middleCoil.readThermocoupleTemperature();
   outerTemp = outerCoil.readThermocoupleTemperature();
