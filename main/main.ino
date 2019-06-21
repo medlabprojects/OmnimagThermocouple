@@ -4,20 +4,24 @@
 #include <Adafruit_GFX.h>  //Graphics header
 #include <Adafruit_SSD1306.h> //OLED Screen header
 
-// Initialize thermocouple objects and setup software SPI pins for each
-// Use software SPI: CS, DI, DO, CLK
+// Initialize thermocouple objects and setup hardware SPI pins for each
+// Using software SPI: input any 4 digital I/O pins, order: CS, DI, DO, CLK
+// Using hardware SPI: input CS pin. Can be any digital I/O pin as well
 Adafruit_MAX31856 innerCoil = Adafruit_MAX31856(10);
 Adafruit_MAX31856 middleCoil = Adafruit_MAX31856(9);
 Adafruit_MAX31856 outerCoil = Adafruit_MAX31856(8);
 
+// Pin for over-temperature system shutdown
 int overtempPin = 0;
 
 //OLED Screen Setup
 #define OLED_RESET 14
 Adafruit_SSD1306 display(OLED_RESET); //reset (wipe) display
 const int pixPosUnitX = 110;
-const int pixOffsetX = 23; //for equals sign
+const int pixOffsetX = 60; //for equals sign
+const int pixOffsetX2 = 70; //offset for Temperature readings
 const int pixVert = 8; //vertical pixel spacing unit going from top to bottom
+const int barLength = 30; //length of rectangle that clears temp data field on screen
 const int pixLoopTimeX = 100;
 const int pixLoopTimeY = 24;
 int16_t  X1, Y1;
@@ -26,14 +30,15 @@ int16_t  X3, Y3;
 int16_t  X4, Y4;
 const bool display_flag = true; //choose to display field data or not.
 
-//Temperature Readings Variables
+//Temperature Readings Variables and Sensor Faults. Faults initialized to no errors. 
 float innerTemp, middleTemp, outerTemp;
+uint8_t innerFault = 0;
+uint8_t middleFault = 0;
+uint8_t outerFault = 0;
 
 void setup() {
   delay(1000);
   Serial.begin(115200);
-  SPI.begin();
-  delay(500);
   
   Serial.println("Omnimag thermocouple test");
   delay(500);
@@ -59,21 +64,21 @@ void setup() {
   display.setTextColor(WHITE);
   // Display Bx field text, equals sign, and units (first row)
   display.print("Inner Coil");
-  display.setCursor(60,0);
+  display.setCursor(pixOffsetX,0);
   display.print("=");
   display.setCursor(pixPosUnitX, 0);
   display.print("C");
   // Display By field text, equals sign, and units (second row)
   display.setCursor(0, pixVert);
   display.print("Mid   Coil");
-  display.setCursor(60,pixVert);
+  display.setCursor(pixOffsetX,pixVert);
   display.print("=");
   display.setCursor(pixPosUnitX, pixVert);
   display.println("C");
   // Display Bz field text, equals sign, and units (third row)
   display.setCursor(0, pixVert * 2);
   display.print("Outer Coil");
-  display.setCursor(60,pixVert*2);
+  display.setCursor(pixOffsetX,pixVert * 2);
   display.print("=");
   display.setCursor(pixPosUnitX, pixVert * 2);
   display.println("C");
@@ -92,48 +97,55 @@ void setup() {
   innerCoil.setThermocoupleType(MAX31856_TCTYPE_K);
   middleCoil.setThermocoupleType(MAX31856_TCTYPE_K);
   outerCoil.setThermocoupleType(MAX31856_TCTYPE_K);
-  delay(2000);
 
 }
 
 void loop() {
-  display.fillRect(70, 0, 30, 8, BLACK); // clear text area for inner coil temp
-  display.fillRect(70, 8, 30, 8, BLACK); // clear text area for middle coil temp
-  display.fillRect(70,16, 30, 8, BLACK); // clear text area for outer coil temp
 
+  //Clear temperature areas of display
+  display.fillRect(pixOffsetX2,         0, barLength, pixVert, BLACK);//clear text area for inner temp
+  display.fillRect(pixOffsetX2,   pixVert, barLength, pixVert, BLACK);//clear text area for mid temp
+  display.fillRect(pixOffsetX2, 2*pixVert, barLength, pixVert, BLACK);//clear text area for outer temp
+
+  //Record new readings from thermocouples
   innerTemp = innerCoil.readThermocoupleTemperature();
   middleTemp = middleCoil.readThermocoupleTemperature();
   outerTemp = outerCoil.readThermocoupleTemperature();
-  
-  display.setCursor(70,0);
-  display.print(innerTemp);
-  display.setCursor(70,8);
-  display.print(middleTemp);
-  display.setCursor(70,16);
-  display.print(outerTemp);
-  
-  display.display();
-  // Check and print any faults
-  uint8_t innerFault = innerCoil.readFault();
-  uint8_t middleFault = middleCoil.readFault();
-  uint8_t outerFault = outerCoil.readFault();
-  
 
+  //Display new temperature readings
+  display.setCursor(pixOffsetX2,0);
+  display.print(innerTemp);
+  display.setCursor(pixOffsetX2, pixVert);
+  display.print(middleTemp);
+  display.setCursor(pixOffsetX2, 2*pixVert);
+  display.print(outerTemp);
+  display.display();
+  
+  // Check any faults
+  innerFault = innerCoil.readFault();
+  middleFault = middleCoil.readFault();
+  outerFault = outerCoil.readFault();
+
+  //Blink if faults occur
   if (innerFault != 0 || middleFault != 0 || outerFault != 0) {
-  digitalWriteFast(overtempPin, HIGH);
-  delay(100);
-  digitalWriteFast(overtempPin, LOW);
-  delay(100);
-  digitalWriteFast(overtempPin, HIGH);
-  delay(100);
-  digitalWriteFast(overtempPin, LOW);
-  delay(100);
+    digitalWriteFast(overtempPin, HIGH);
+    delay(100);
+    digitalWriteFast(overtempPin, LOW);
+    delay(100);
+    digitalWriteFast(overtempPin, HIGH);
+    delay(100);
+    digitalWriteFast(overtempPin, LOW);
+    delay(100);
   }
+
+  //Set overtemp pin to HIGH if temperature is over threshold 
   if (innerTemp >= 30.0 || middleTemp >= 30.0 || outerTemp >= 30.0) {
-  digitalWriteFast(overtempPin, HIGH);
+    digitalWriteFast(overtempPin, HIGH);
   }
+
+  //If no errors and no overtemp, keep the overtemp pin low
   else {
-  digitalWriteFast(overtempPin, LOW);
+    digitalWriteFast(overtempPin, LOW);
   }
   delay(100);
 }
