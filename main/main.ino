@@ -3,8 +3,8 @@
 ************************************************
 *** Dominick Ropella                         ***
 *** Vanderbilt University 2019               ***
-*** V1.1 Stable Release                      ***
-*** 6/21/19                                  ***
+*** V1.2 Stable Release                      ***
+*** 6/27/19                                  ***
 *** Contact: dominick.ropella@vanderbilt.edu ***
 ************************************************  
 ************************************************
@@ -24,8 +24,16 @@ Adafruit_MAX31856 middleCoil = Adafruit_MAX31856(9);
 Adafruit_MAX31856 outerCoil = Adafruit_MAX31856(8);
 
 // Pin for over-temperature system shutdown and temperature limit
-const int overtempPin = 0;
+const int overtempPinInner = 0;
+const int overtempPinMiddle = 1;
+const int overtempPinOuter = 2;
+const int faultPin = 3;
+const int masterSwitch = 4;
 const float maxTempLimit = 30.0; //Celcius
+const float lowerThreshold = 5.0; //Celcius lower bound for indicating errors
+const int loopCount = 5;
+int faultLoops = 0;
+int safetyChecks = 0;
 
 //OLED Screen Setup
 const int OLED_RESET = 14;
@@ -91,8 +99,16 @@ void setup() {
   display.display();
 
   //Set fault pin type and set intially to no fault
-  pinMode(overtempPin, OUTPUT);
-  digitalWriteFast(overtempPin, LOW);
+  pinMode(overtempPinInner, OUTPUT);
+  digitalWriteFast(overtempPinInner, LOW);
+  pinMode(overtempPinMiddle, OUTPUT);
+  digitalWriteFast(overtempPinMiddle, LOW);
+  pinMode(overtempPinOuter, OUTPUT);
+  digitalWriteFast(overtempPinOuter, LOW);
+  pinMode(faultPin, OUTPUT);
+  digitalWriteFast(faultPin, LOW);
+  pinMode(masterSwitch, OUTPUT);
+  digitalWriteFast(masterSwitch, LOW);
 
   //Begin each coil thermocouple sensor board communication
   innerCoil.begin();
@@ -103,7 +119,6 @@ void setup() {
   innerCoil.setThermocoupleType(MAX31856_TCTYPE_K);
   middleCoil.setThermocoupleType(MAX31856_TCTYPE_K);
   outerCoil.setThermocoupleType(MAX31856_TCTYPE_K);
-
 }
 
 void loop() {
@@ -133,25 +148,53 @@ void loop() {
   outerFault  = outerCoil.readFault();
 
   //Blink twice quickly if any faults occur
-  if (innerFault != 0 || middleFault != 0 || outerFault != 0) {
-    digitalWriteFast(overtempPin, HIGH);
-    delay(100);
-    digitalWriteFast(overtempPin, LOW);
-    delay(100);
-    digitalWriteFast(overtempPin, HIGH);
-    delay(100);
-    digitalWriteFast(overtempPin, LOW);
-    delay(100);
+  if (innerFault != 0 || middleFault != 0 || outerFault != 0 || innerTemp < lowerThreshold || middleTemp < lowerThreshold || outerTemp < lowerThreshold) {
+    faultLoops = faultLoops + 1;
+    if (faultLoops >= loopCount){
+      digitalWriteFast(faultPin, HIGH);
+      digitalWriteFast(masterSwitch, HIGH);
+    }
+  }
+  else {
+    faultLoops = 0;
+    safetyChecks = safetyChecks + 1;
+    digitalWriteFast(faultPin, LOW);
   }
 
   //Set overtemp pin to HIGH if temperature is over threshold on any thermocouple
-  if (innerTemp >= maxTempLimit || middleTemp >= maxTempLimit || outerTemp >= maxTempLimit) {
-    digitalWriteFast(overtempPin, HIGH);
+  if (innerTemp >= maxTempLimit){
+    digitalWriteFast(overtempPinInner, HIGH);
+    digitalWriteFast(masterSwitch, HIGH);
+  }
+  else {
+    digitalWriteFast(overtempPinInner, LOW);
+    safetyChecks = safetyChecks + 1;
   }
 
-  //If no errors and no overtemp, keep the overtemp pin low
-  else {
-    digitalWriteFast(overtempPin, LOW);
+  if (middleTemp >= maxTempLimit) {
+    digitalWriteFast(overtempPinMiddle, HIGH);
+    digitalWriteFast(masterSwitch, HIGH);
   }
-  delay(100);
+  else {
+    digitalWriteFast(overtempPinMiddle, LOW);
+    safetyChecks = safetyChecks + 1;
+  }
+  
+  if (outerTemp >= maxTempLimit) {
+    digitalWriteFast(overtempPinOuter, HIGH);
+    digitalWriteFast(masterSwitch, HIGH);
+  }
+  else {
+    digitalWriteFast(overtempPinOuter, LOW);
+    safetyChecks = safetyChecks + 1;
+  }
+
+  if (safetyChecks == 4) {
+    digitalWriteFast(masterSwitch, LOW);
+    safetyChecks = 0;
+  }
+  else {
+    safetyChecks = 0;
+  }
+  delay(10);
 }
