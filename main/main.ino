@@ -3,8 +3,8 @@
 ************************************************
 *** Dominick Ropella                         ***
 *** Vanderbilt University 2019               ***
-*** V1.2 Stable Release                      ***
-*** 6/27/19                                  ***
+*** V1.3 Stable Release                      ***
+*** 7/9/19                                   ***
 *** Contact: dominick.ropella@vanderbilt.edu ***
 ************************************************  
 ************************************************
@@ -23,19 +23,21 @@ Adafruit_MAX31856 innerCoil = Adafruit_MAX31856(10);
 Adafruit_MAX31856 middleCoil = Adafruit_MAX31856(9);
 Adafruit_MAX31856 outerCoil = Adafruit_MAX31856(8);
 
-// Pin for over-temperature system shutdown and temperature limit
+// Pins for over-temperature, generic fault, and master shutdown pin
 const int overtempPinInner = 0;
 const int overtempPinMiddle = 1;
 const int overtempPinOuter = 2;
-const int faultPin = 3;
-const int masterSwitch = 4;
-const float maxTempLimit = 30.0; //Celcius
-const float lowerThreshold = 5.0; //Celcius lower bound for indicating errors
-const int loopCount = 5;
-int faultLoops = 0;
-int safetyChecks = 0;
+const int faultPin = 3;  //indicates fault detected on any thermocouple board
+const int masterSwitch = 4; //final safety digital logic to interface with e-stop switch
+const float maxTempLimit = 30.0; //Celcius, maxiumum allowable temp for any coil.
+const float lowerThreshold = 5.0; //Celcius lower bound for indicating errors sometimes not detected by thermocouple boards
 
-//OLED Screen Setup
+// Fault delay and checks for all systems OK
+const int loopCount = 5; //number of loops that the fault pin must be active to trigger masterSwitch
+int faultLoops = 0; //Initial value for the number of consecutive loops that the fault pin has been active
+int safetyChecks = 0; //This is a running sum that resets every loop. Each safety check contributes +1 to the sum, and it must be a certain value to avoid triggering master switch.
+
+// OLED Screen Setup
 const int OLED_RESET = 14;
 Adafruit_SSD1306 display(OLED_RESET); //reset (wipe) display
 const int pixPosUnitX = 110; //horizontal spacing for Celcius label
@@ -44,7 +46,7 @@ const int pixOffsetX2 = 70; //horizontal spacing for Temperature readings
 const int pixVert = 8; //vertical pixel row spacing unit going from top to bottom
 const int barLength = 30; //pixel length of rectangle that clears temp data field on screen
 
-//Temperature Readings Variables and Sensor Faults. Faults initialized to no errors. 
+// Temperature Readings Variables and Sensor Faults. Faults initialized to no errors. 
 float innerTemp = 0.0;
 float middleTemp = 0.0;
 float outerTemp = 0.0;
@@ -53,10 +55,10 @@ uint8_t middleFault = 0;
 uint8_t outerFault = 0;
 
 void setup() {
-  delay(1000); //This delay ensures successful startup when using poor power supplies
+  delay(1000); //This delay ensures successful startup when using low-quality power supplies
   Serial.begin(115200); //Speed doesn't matter here since teensy runs on native USB
 
-  //Start the display
+  // Start the display
   display.begin(SSD1306_SWITCHCAPVCC, 0X3C); //initialize with the I2C addr 0X3D (for the 128x64)
   display.setRotation(4); //long side is horizontal with pins on bottom side of board
   display.clearDisplay();
@@ -72,16 +74,19 @@ void setup() {
   // setup static text (so we don't waste time refreshing it over and over)
   display.clearDisplay();
   display.display(); //update the display to clear
-  //text properties
+  
+  // text properties
   display.setTextSize(1);
   display.setCursor(0, 0);
   display.setTextColor(WHITE);
+  
   // Display Bx field text, equals sign, and units (first row)
   display.print("Inner Coil");
   display.setCursor(pixOffsetX,0);
   display.print("=");
   display.setCursor(pixPosUnitX, 0);
   display.print("C");
+  
   // Display By field text, equals sign, and units (second row)
   display.setCursor(0, pixVert);
   display.print("Mid   Coil");
@@ -89,6 +94,7 @@ void setup() {
   display.print("=");
   display.setCursor(pixPosUnitX, pixVert);
   display.println("C");
+  
   // Display Bz field text, equals sign, and units (third row)
   display.setCursor(0, pixVert * 2);
   display.print("Outer Coil");
@@ -96,9 +102,11 @@ void setup() {
   display.print("=");
   display.setCursor(pixPosUnitX, pixVert * 2);
   display.println("C");
+
+  // Update display screen
   display.display();
 
-  //Set fault pin type and set intially to no fault
+  // Set all status pins to ouputs and set to low values initially
   pinMode(overtempPinInner, OUTPUT);
   digitalWriteFast(overtempPinInner, LOW);
   pinMode(overtempPinMiddle, OUTPUT);
@@ -107,15 +115,17 @@ void setup() {
   digitalWriteFast(overtempPinOuter, LOW);
   pinMode(faultPin, OUTPUT);
   digitalWriteFast(faultPin, LOW);
-  pinMode(masterSwitch, OUTPUT);
-  digitalWriteFast(masterSwitch, LOW);
 
-  //Begin each coil thermocouple sensor board communication
+  // Master Switch is active low, meaning shut off when the logic level is low. Initialize to high
+  pinMode(masterSwitch, OUTPUT);
+  digitalWriteFast(masterSwitch, HIGH);
+
+  // Begin each coil thermocouple sensor board communication
   innerCoil.begin();
   middleCoil.begin();
   outerCoil.begin();
 
-  //Set the thermocouple type for each (all type K for now)
+  // Set the thermocouple type for each (all type K for now)
   innerCoil.setThermocoupleType(MAX31856_TCTYPE_K);
   middleCoil.setThermocoupleType(MAX31856_TCTYPE_K);
   outerCoil.setThermocoupleType(MAX31856_TCTYPE_K);
@@ -123,17 +133,17 @@ void setup() {
 
 void loop() {
 
-  //Clear temperature areas of display
+  // Clear temperature areas of display
   display.fillRect(pixOffsetX2,         0, barLength, pixVert, BLACK);//clear text area for inner temp
   display.fillRect(pixOffsetX2,   pixVert, barLength, pixVert, BLACK);//clear text area for mid temp
   display.fillRect(pixOffsetX2, 2*pixVert, barLength, pixVert, BLACK);//clear text area for outer temp
 
-  //Record new readings from thermocouples
+  // Record new readings from thermocouples
   innerTemp  = innerCoil.readThermocoupleTemperature();
   middleTemp = middleCoil.readThermocoupleTemperature();
   outerTemp  = outerCoil.readThermocoupleTemperature();
 
-  //Display new temperature readings
+  // Display new temperature readings
   display.setCursor(pixOffsetX2,0);
   display.print(innerTemp);
   display.setCursor(pixOffsetX2, pixVert);
@@ -147,24 +157,24 @@ void loop() {
   middleFault = middleCoil.readFault();
   outerFault  = outerCoil.readFault();
 
-  //Blink twice quickly if any faults occur
+  // Indicate if any faults have occured 
   if (innerFault != 0 || middleFault != 0 || outerFault != 0 || innerTemp < lowerThreshold || middleTemp < lowerThreshold || outerTemp < lowerThreshold) {
-    faultLoops = faultLoops + 1;
-    if (faultLoops >= loopCount){
+    faultLoops = faultLoops + 1; // add one to the fault loops total
+    if (faultLoops >= loopCount){ // if the faults have existed for 5 loops, trigger master switch
       digitalWriteFast(faultPin, HIGH);
-      digitalWriteFast(masterSwitch, HIGH);
+      digitalWriteFast(masterSwitch, LOW);
     }
   }
   else {
-    faultLoops = 0;
-    safetyChecks = safetyChecks + 1;
+    faultLoops = 0; //reset fault loops counter
+    safetyChecks = safetyChecks + 1; // safety checks gets +1 added to total
     digitalWriteFast(faultPin, LOW);
   }
 
-  //Set overtemp pin to HIGH if temperature is over threshold on any thermocouple
+  // Set overtemp pin to HIGH if temperature is over threshold on any thermocouple
   if (innerTemp >= maxTempLimit){
     digitalWriteFast(overtempPinInner, HIGH);
-    digitalWriteFast(masterSwitch, HIGH);
+    digitalWriteFast(masterSwitch, LOW);
   }
   else {
     digitalWriteFast(overtempPinInner, LOW);
@@ -173,7 +183,7 @@ void loop() {
 
   if (middleTemp >= maxTempLimit) {
     digitalWriteFast(overtempPinMiddle, HIGH);
-    digitalWriteFast(masterSwitch, HIGH);
+    digitalWriteFast(masterSwitch, LOW);
   }
   else {
     digitalWriteFast(overtempPinMiddle, LOW);
@@ -182,19 +192,19 @@ void loop() {
   
   if (outerTemp >= maxTempLimit) {
     digitalWriteFast(overtempPinOuter, HIGH);
-    digitalWriteFast(masterSwitch, HIGH);
+    digitalWriteFast(masterSwitch, LOW);
   }
   else {
     digitalWriteFast(overtempPinOuter, LOW);
     safetyChecks = safetyChecks + 1;
   }
 
-  if (safetyChecks == 4) {
-    digitalWriteFast(masterSwitch, LOW);
-    safetyChecks = 0;
+  if (safetyChecks == 4) { // all 4 checks must pass to keep master switch high
+    digitalWriteFast(masterSwitch, HIGH);
+    safetyChecks = 0; // reset safety checks for next loop
   }
   else {
-    safetyChecks = 0;
+    safetyChecks = 0; 
   }
   delay(10);
 }
