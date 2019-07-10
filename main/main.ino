@@ -3,18 +3,28 @@
 ************************************************
 *** Dominick Ropella                         ***
 *** Vanderbilt University 2019               ***
-*** V1.3 Stable Release                      ***
-*** 7/9/19                                   ***
+*** V1.4 Stable Release                      ***
+*** 7/10/19                                  ***
 *** Contact: dominick.ropella@vanderbilt.edu ***
 ************************************************  
 ************************************************
 */
 
+#include <ros.h> //enable ROS communications
+#include <geometry_msgs/Vector3.h> //ROS 3d vector msg type
+#include <std_msgs/Bool.h> //ROS bool msg type
 #include <Adafruit_MAX31856.h> //Thermocouple header
 #include "Wire.h"  //for I2C comm for OLED screen
 #include "SPI.h"  //for SPI comm for thermocouple boards
 #include <Adafruit_GFX.h>  //Graphics header
 #include <Adafruit_SSD1306.h> //OLED screen header
+
+// Set up ROS node and publisher for coil temps and thermal shutdown activated
+geometry_msgs::Vector3 coil_temps_msg;
+std_msgs::Bool thermal_stop_msg;
+ros::Publisher pub_field("Coil_Temps", &coil_temps_msg);
+ros::Publisher pub_field2("Thermal_Stop", &thermal_stop_msg);
+ros::NodeHandle nh;
 
 // Initialize thermocouple objects and setup hardware SPI pins for each
 // Using software SPI: input any 4 digital I/O pins, order: CS, DI, DO, CLK
@@ -129,6 +139,11 @@ void setup() {
   innerCoil.setThermocoupleType(MAX31856_TCTYPE_K);
   middleCoil.setThermocoupleType(MAX31856_TCTYPE_K);
   outerCoil.setThermocoupleType(MAX31856_TCTYPE_K);
+
+  //Initialize ROS Node and add two publishers
+  nh.initNode();
+  nh.advertise(pub_field);
+  nh.advertise(pub_field2);
 }
 
 void loop() {
@@ -162,7 +177,6 @@ void loop() {
     faultLoops = faultLoops + 1; // add one to the fault loops total
     if (faultLoops >= loopCount){ // if the faults have existed for 5 loops, trigger master switch
       digitalWriteFast(faultPin, HIGH);
-      digitalWriteFast(masterSwitch, LOW);
     }
   }
   else {
@@ -174,7 +188,6 @@ void loop() {
   // Set overtemp pin to HIGH if temperature is over threshold on any thermocouple
   if (innerTemp >= maxTempLimit){
     digitalWriteFast(overtempPinInner, HIGH);
-    digitalWriteFast(masterSwitch, LOW);
   }
   else {
     digitalWriteFast(overtempPinInner, LOW);
@@ -183,7 +196,6 @@ void loop() {
 
   if (middleTemp >= maxTempLimit) {
     digitalWriteFast(overtempPinMiddle, HIGH);
-    digitalWriteFast(masterSwitch, LOW);
   }
   else {
     digitalWriteFast(overtempPinMiddle, LOW);
@@ -192,7 +204,6 @@ void loop() {
   
   if (outerTemp >= maxTempLimit) {
     digitalWriteFast(overtempPinOuter, HIGH);
-    digitalWriteFast(masterSwitch, LOW);
   }
   else {
     digitalWriteFast(overtempPinOuter, LOW);
@@ -201,10 +212,22 @@ void loop() {
 
   if (safetyChecks == 4) { // all 4 checks must pass to keep master switch high
     digitalWriteFast(masterSwitch, HIGH);
+    thermal_stop_msg.data = false;
     safetyChecks = 0; // reset safety checks for next loop
   }
   else {
+    digitalWriteFast(masterSwitch, LOW);
+    thermal_stop_msg.data = true;
     safetyChecks = 0; 
   }
+  if(nh.connected()){
+    coil_temps_msg.x = innerTemp;
+    coil_temps_msg.y = middleTemp;
+    coil_temps_msg.z = outerTemp;
+    
+    pub_field.publish(&coil_temps_msg);
+    pub_field2.publish(&thermal_stop_msg);
+  }
+  nh.spinOnce();
   delay(10);
 }
